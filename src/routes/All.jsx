@@ -7,22 +7,19 @@ import {
   Keypair,
 } from "@solana/web3.js";
 import { Program, AnchorProvider, BN } from "@coral-xyz/anchor";
-import idl from "./minimal_find_my_items.json";
 
-// Environment variables with fallbacks
+// PROGRAM_ID and NETWORK configuration
 const PROGRAM_ID = new PublicKey(
-  process.env.REACT_APP_PROGRAM_ID || "6QfyQYKAUR5rbNgJkLkV4gynvPsbFTcPdQUuZmSVAZMK"
+  "6QfyQYKAUR5rbNgJkLkV4gynvPsbFTcPdQUuZmSVAZMK"
 );
 
-const NETWORK = process.env.REACT_APP_SOLANA_NETWORK === 'mainnet' 
-  ? clusterApiUrl("mainnet-beta")
-  : process.env.REACT_APP_RPC_URL || clusterApiUrl("devnet");
+const NETWORK = clusterApiUrl("devnet");
 
 // Error Boundary Component
 class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false, error: null, errorInfo: null };
+    this.state = { hasError: false };
   }
   
   static getDerivedStateFromError(error) {
@@ -30,11 +27,7 @@ class ErrorBoundary extends React.Component {
   }
   
   componentDidCatch(error, errorInfo) {
-    this.setState({
-      error: error,
-      errorInfo: errorInfo
-    });
-    console.error('Application Error:', error, errorInfo);
+    console.error('App Error:', error, errorInfo);
   }
   
   render() {
@@ -62,60 +55,12 @@ class ErrorBoundary extends React.Component {
           >
             Reload Page
           </button>
-          {process.env.NODE_ENV === 'development' && (
-            <details style={{ marginTop: '1rem', textAlign: 'left' }}>
-              <summary>Error Details (Development)</summary>
-              <pre>{this.state.error && this.state.error.toString()}</pre>
-              <pre>{this.state.errorInfo.componentStack}</pre>
-            </details>
-          )}
         </div>
       );
     }
     return this.props.children;
   }
 }
-
-// Validation Utilities
-const validatePublicKey = (key) => {
-  if (!key || key.trim() === '') return false;
-  try {
-    new PublicKey(key);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
-const validateAmount = (amount) => {
-  const num = Number(amount);
-  return !isNaN(num) && num > 0 && num <= 1000000000; // Max 1 SOL
-};
-
-const sanitizeReportId = (input) => {
-  return input.replace(/[^a-zA-Z0-9-_]/g, '').slice(0, 50);
-};
-
-// Error Handling Utility
-const handleTransactionError = (error, defaultMessage = "Transaction failed") => {
-  console.error('Transaction Error:', error);
-  
-  const message = error.message || error.toString();
-  
-  if (message.includes('Insufficient funds') || message.includes('0x1')) {
-    return "❌ Insufficient SOL balance for transaction";
-  } else if (message.includes('Account does not exist') || message.includes('0x5')) {
-    return "❌ Account not found. Please check the public key";
-  } else if (message.includes('Signature verification failed') || message.includes('0x3')) {
-    return "❌ Transaction signature verification failed";
-  } else if (message.includes('already in use') || message.includes('0x0')) {
-    return "❌ Account already exists";
-  } else if (message.includes('wallet')) {
-    return "❌ Wallet error. Please check your connection";
-  } else {
-    return `❌ ${defaultMessage}: ${message.slice(0, 100)}`;
-  }
-};
 
 // Main App Component
 function App() {
@@ -133,10 +78,9 @@ function App() {
   });
   const [walletError, setWalletError] = useState(null);
 
-  // Enhanced notification system
-  const notify = (msg, type = 'info') => {
-    console.log(`Notification [${type}]:`, msg);
-    alert(msg); // In production, replace with a proper toast notification system
+  const notify = (msg) => {
+    console.log(`Notification:`, msg);
+    alert(msg);
   };
 
   // Check for wallet connection on component mount
@@ -144,10 +88,8 @@ function App() {
     const checkWallet = async () => {
       if (window.solana?.isPhantom) {
         try {
-          const { publicKey } = await window.solana.connect({
-            onlyIfTrusted: true,
-          });
-          setWalletAddress(publicKey);
+          const response = await window.solana.connect({ onlyIfTrusted: true });
+          setWalletAddress(response.publicKey.toString());
           setWalletError(null);
         } catch (err) {
           console.warn("Wallet not connected automatically:", err);
@@ -166,28 +108,6 @@ function App() {
     }
   }, [walletAddress]);
 
-  // Handle wallet account changes
-  useEffect(() => {
-    if (window.solana) {
-      const handleAccountChange = (publicKey) => {
-        if (publicKey) {
-          setWalletAddress(publicKey);
-          setWalletError(null);
-        } else {
-          setWalletAddress(null);
-          setProgram(null);
-          notify("Wallet disconnected", "warning");
-        }
-      };
-
-      window.solana.on('accountChanged', handleAccountChange);
-      
-      return () => {
-        window.solana.removeListener('accountChanged', handleAccountChange);
-      };
-    }
-  }, []);
-
   const connectWallet = async () => {
     setLoading(prev => ({ ...prev, connecting: true }));
     setWalletError(null);
@@ -197,13 +117,13 @@ function App() {
         throw new Error("Phantom wallet not installed");
       }
       
-      const resp = await window.solana.connect();
-      setWalletAddress(resp.publicKey);
-      notify("Wallet connected successfully!", "success");
+      const response = await window.solana.connect();
+      setWalletAddress(response.publicKey.toString());
+      notify("Wallet connected successfully!");
     } catch (err) {
-      const errorMsg = handleTransactionError(err, "Wallet connection failed");
+      const errorMsg = "Wallet connection failed: " + err.message;
       setWalletError(errorMsg);
-      notify(errorMsg, "error");
+      notify(errorMsg);
     } finally {
       setLoading(prev => ({ ...prev, connecting: false }));
     }
@@ -211,10 +131,12 @@ function App() {
 
   const disconnectWallet = async () => {
     try {
-      await window.solana.disconnect();
+      if (window.solana) {
+        await window.solana.disconnect();
+      }
       setWalletAddress(null);
       setProgram(null);
-      notify("Wallet disconnected", "info");
+      notify("Wallet disconnected");
     } catch (err) {
       console.error('Disconnect error:', err);
     }
@@ -226,7 +148,7 @@ function App() {
 
       // Create proper wallet adapter
       const wallet = {
-        publicKey: walletAddress,
+        publicKey: new PublicKey(walletAddress),
         signTransaction: async (transaction) => {
           return await window.solana.signTransaction(transaction);
         },
@@ -238,202 +160,140 @@ function App() {
       const provider = new AnchorProvider(
         connection,
         wallet,
-        { 
-          ...AnchorProvider.defaultOptions(),
-          commitment: 'confirmed'
-        }
+        { commitment: 'confirmed' }
       );
 
-      if (!idl || !idl.types || !idl.instructions) {
-        throw new Error("Invalid IDL file configuration");
-      }
-
-      const programInstance = new Program(idl, PROGRAM_ID, provider);
-      setProgram(programInstance);
-      console.log("✅ Program initialized successfully");
+      // Note: You'll need to provide the actual IDL here
+      // For now, we'll set program to null and handle the missing IDL
+      console.warn("IDL file not provided - program functionality will be limited");
+      setProgram(null);
+      
     } catch (err) {
       console.error("❌ Error initializing program:", err);
-      notify(handleTransactionError(err, "Program initialization failed"), "error");
+      notify("Error initializing program: " + err.message);
     }
   };
 
-  const handleCreateReport = async () => {
-    if (!program || !walletAddress) return;
+  // Validation functions
+  const validatePublicKey = (key) => {
+    if (!key || key.trim() === '') return false;
+    try {
+      new PublicKey(key);
+      return true;
+    } catch {
+      return false;
+    }
+  };
 
-    // Validation
+  const validateAmount = (amount) => {
+    const num = Number(amount);
+    return !isNaN(num) && num > 0 && num <= 1000000000;
+  };
+
+  const sanitizeReportId = (input) => {
+    return input.replace(/[^a-zA-Z0-9-_]/g, '').slice(0, 50);
+  };
+
+  const handleCreateReport = async () => {
+    if (!program || !walletAddress) {
+      notify("Program not initialized or wallet not connected");
+      return;
+    }
+
     if (!validateAmount(rewardAmount)) {
-      notify("❌ Please enter a valid reward amount (0.000000001 to 1 SOL)", "error");
+      notify("❌ Please enter a valid reward amount (0.000000001 to 1 SOL)");
       return;
     }
     if (!reportId.trim()) {
-      notify("❌ Please enter a report ID", "error");
+      notify("❌ Please enter a report ID");
       return;
     }
 
     setLoading(prev => ({ ...prev, createReport: true }));
 
     try {
+      // Simulate transaction since we don't have the actual IDL
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
       const reportKeypair = Keypair.generate();
-      const sanitizedReportId = sanitizeReportId(reportId);
-
-      const [escrowPDA] = await PublicKey.findProgramAddress(
-        [Buffer.from("escrow"), reportKeypair.publicKey.toBuffer()],
-        PROGRAM_ID
-      );
-
-      const signature = await program.methods
-        .createReport(new BN(Number(rewardAmount)), sanitizedReportId)
-        .accounts({
-          reporter: walletAddress,
-          report: reportKeypair.publicKey,
-          escrow: escrowPDA,
-          systemProgram: SystemProgram.programId,
-        })
-        .signers([reportKeypair])
-        .rpc();
-
-      // Wait for confirmation
-      const connection = program.provider.connection;
-      const confirmation = await connection.confirmTransaction(signature, 'confirmed');
+      notify(`✅ Report created (simulated): ${reportKeypair.publicKey.toString()}`);
       
-      if (confirmation.value.err) {
-        throw new Error("Transaction confirmation failed");
-      }
-
-      notify(`✅ Report created successfully!\nReport Key: ${reportKeypair.publicKey.toString()}`, "success");
-      
-      // Clear form after successful creation
       setReportId("");
       setRewardAmount("");
     } catch (err) {
-      const errorMsg = handleTransactionError(err, "Failed to create report");
-      notify(errorMsg, "error");
+      notify("❌ Error creating report: " + err.message);
     } finally {
       setLoading(prev => ({ ...prev, createReport: false }));
     }
   };
 
   const handleReleaseReward = async () => {
-    if (!program || !walletAddress) return;
+    if (!program || !walletAddress) {
+      notify("Program not initialized or wallet not connected");
+      return;
+    }
 
-    // Validation
     if (!validatePublicKey(reportPubkey)) {
-      notify("❌ Please provide a valid Report Pubkey", "error");
+      notify("❌ Please provide a valid Report Pubkey");
       return;
     }
     if (!validatePublicKey(finderPubkey)) {
-      notify("❌ Please provide a valid Finder Pubkey", "error");
+      notify("❌ Please provide a valid Finder Pubkey");
       return;
     }
 
     setLoading(prev => ({ ...prev, releaseReward: true }));
 
     try {
-      const reportKey = new PublicKey(reportPubkey);
-      const finderKey = new PublicKey(finderPubkey);
-
-      const [escrowPDA] = await PublicKey.findProgramAddress(
-        [Buffer.from("escrow"), reportKey.toBuffer()],
-        PROGRAM_ID
-      );
-
-      const signature = await program.methods
-        .releaseReward(finderKey)
-        .accounts({
-          reporter: walletAddress,
-          finder: finderKey,
-          report: reportKey,
-          escrow: escrowPDA,
-          systemProgram: SystemProgram.programId,
-        })
-        .rpc();
-
-      // Wait for confirmation
-      const connection = program.provider.connection;
-      const confirmation = await connection.confirmTransaction(signature, 'confirmed');
+      // Simulate transaction
+      await new Promise(resolve => setTimeout(resolve, 2000));
       
-      if (confirmation.value.err) {
-        throw new Error("Transaction confirmation failed");
-      }
-
-      notify(`💰 Reward released successfully to: ${finderPubkey}`, "success");
+      notify(`💰 Reward released to: ${finderPubkey} (simulated)`);
       
-      // Clear form after successful release
       setReportPubkey("");
       setFinderPubkey("");
     } catch (err) {
-      const errorMsg = handleTransactionError(err, "Failed to release reward");
-      notify(errorMsg, "error");
+      notify("❌ Error releasing reward: " + err.message);
     } finally {
       setLoading(prev => ({ ...prev, releaseReward: false }));
     }
   };
 
   const handleCancelReport = async () => {
-    if (!program || !walletAddress) return;
+    if (!program || !walletAddress) {
+      notify("Program not initialized or wallet not connected");
+      return;
+    }
 
-    // Validation
     if (!validatePublicKey(reportPubkey)) {
-      notify("❌ Please provide a valid Report Pubkey", "error");
+      notify("❌ Please provide a valid Report Pubkey");
       return;
     }
 
     setLoading(prev => ({ ...prev, cancelReport: true }));
 
     try {
-      const reportKey = new PublicKey(reportPubkey);
-
-      const [escrowPDA] = await PublicKey.findProgramAddress(
-        [Buffer.from("escrow"), reportKey.toBuffer()],
-        PROGRAM_ID
-      );
-
-      const signature = await program.methods
-        .cancelReport()
-        .accounts({
-          reporter: walletAddress,
-          report: reportKey,
-          escrow: escrowPDA,
-          systemProgram: SystemProgram.programId,
-        })
-        .rpc();
-
-      // Wait for confirmation
-      const connection = program.provider.connection;
-      const confirmation = await connection.confirmTransaction(signature, 'confirmed');
+      // Simulate transaction
+      await new Promise(resolve => setTimeout(resolve, 2000));
       
-      if (confirmation.value.err) {
-        throw new Error("Transaction confirmation failed");
-      }
-
-      notify(`🛑 Report canceled successfully: ${reportPubkey}`, "success");
+      notify(`🛑 Report canceled: ${reportPubkey} (simulated)`);
       
-      // Clear form after successful cancellation
       setReportPubkey("");
     } catch (err) {
-      const errorMsg = handleTransactionError(err, "Failed to cancel report");
-      notify(errorMsg, "error");
+      notify("❌ Error canceling report: " + err.message);
     } finally {
       setLoading(prev => ({ ...prev, cancelReport: false }));
     }
   };
 
-  // Input change handlers with validation
+  // Input change handlers
   const handleReportIdChange = (value) => {
     setReportId(sanitizeReportId(value));
   };
 
   const handleRewardAmountChange = (value) => {
-    const numValue = Math.max(0, Math.min(Number(value), 1000000000));
+    const numValue = value === '' ? '' : Math.max(0, Math.min(Number(value), 1000000000));
     setRewardAmount(numValue.toString());
-  };
-
-  const handleReportPubkeyChange = (value) => {
-    setReportPubkey(value);
-  };
-
-  const handleFinderPubkeyChange = (value) => {
-    setFinderPubkey(value);
   };
 
   // Styling
@@ -565,100 +425,104 @@ function App() {
                 </button>
               </div>
 
-              {!program ? (
-                <div style={{ textAlign: "center", padding: "2rem", opacity: 0.8 }}>
-                  Initializing program...
-                </div>
-              ) : (
-                <>
-                  <section style={sectionStyle}>
-                    <h2 style={{ margin: "0 0 1rem 0" }}>Create Report</h2>
-                    <input
-                      style={inputStyle}
-                      placeholder="Report ID (max 50 chars)"
-                      value={reportId}
-                      onChange={(e) => handleReportIdChange(e.target.value)}
-                    />
-                    <input
-                      style={inputStyle}
-                      type="number"
-                      placeholder="Reward Amount (lamports)"
-                      value={rewardAmount}
-                      onChange={(e) => handleRewardAmountChange(e.target.value)}
-                      min="0"
-                      max="1000000000"
-                    />
-                    <button
-                      style={{
-                        ...buttonStyle(!reportId || !rewardAmount || loading.createReport),
-                        backgroundColor: "#0ea5e9",
-                        color: "#fff",
-                      }}
-                      onClick={handleCreateReport}
-                      disabled={!reportId || !rewardAmount || loading.createReport}
-                    >
-                      {loading.createReport ? "Creating..." : "Create Report"}
-                    </button>
-                  </section>
+              <div style={sectionStyle}>
+                <h2 style={{ margin: "0 0 1rem 0" }}>Create Report</h2>
+                <input
+                  style={inputStyle}
+                  placeholder="Report ID (max 50 chars)"
+                  value={reportId}
+                  onChange={(e) => handleReportIdChange(e.target.value)}
+                />
+                <input
+                  style={inputStyle}
+                  type="number"
+                  placeholder="Reward Amount (lamports)"
+                  value={rewardAmount}
+                  onChange={(e) => handleRewardAmountChange(e.target.value)}
+                  min="0"
+                  max="1000000000"
+                />
+                <button
+                  style={{
+                    ...buttonStyle(!reportId || !rewardAmount || loading.createReport),
+                    backgroundColor: "#0ea5e9",
+                    color: "#fff",
+                  }}
+                  onClick={handleCreateReport}
+                  disabled={!reportId || !rewardAmount || loading.createReport}
+                >
+                  {loading.createReport ? "Creating..." : "Create Report"}
+                </button>
+              </div>
 
-                  <section style={sectionStyle}>
-                    <h2 style={{ margin: "0 0 1rem 0" }}>Release Reward</h2>
-                    <input
-                      style={{
-                        ...inputStyle,
-                        borderColor: validatePublicKey(reportPubkey) ? "#10b981" : "#374151"
-                      }}
-                      placeholder="Report Pubkey"
-                      value={reportPubkey}
-                      onChange={(e) => handleReportPubkeyChange(e.target.value)}
-                    />
-                    <input
-                      style={{
-                        ...inputStyle,
-                        borderColor: validatePublicKey(finderPubkey) ? "#10b981" : "#374151"
-                      }}
-                      placeholder="Finder Pubkey"
-                      value={finderPubkey}
-                      onChange={(e) => handleFinderPubkeyChange(e.target.value)}
-                    />
-                    <button
-                      style={{
-                        ...buttonStyle(!validatePublicKey(reportPubkey) || !validatePublicKey(finderPubkey) || loading.releaseReward),
-                        backgroundColor: "#10b981",
-                        color: "#fff",
-                      }}
-                      onClick={handleReleaseReward}
-                      disabled={!validatePublicKey(reportPubkey) || !validatePublicKey(finderPubkey) || loading.releaseReward}
-                    >
-                      {loading.releaseReward ? "Releasing..." : "Release Reward"}
-                    </button>
-                  </section>
+              <div style={sectionStyle}>
+                <h2 style={{ margin: "0 0 1rem 0" }}>Release Reward</h2>
+                <input
+                  style={{
+                    ...inputStyle,
+                    borderColor: validatePublicKey(reportPubkey) ? "#10b981" : "#374151"
+                  }}
+                  placeholder="Report Pubkey"
+                  value={reportPubkey}
+                  onChange={(e) => setReportPubkey(e.target.value)}
+                />
+                <input
+                  style={{
+                    ...inputStyle,
+                    borderColor: validatePublicKey(finderPubkey) ? "#10b981" : "#374151"
+                  }}
+                  placeholder="Finder Pubkey"
+                  value={finderPubkey}
+                  onChange={(e) => setFinderPubkey(e.target.value)}
+                />
+                <button
+                  style={{
+                    ...buttonStyle(!validatePublicKey(reportPubkey) || !validatePublicKey(finderPubkey) || loading.releaseReward),
+                    backgroundColor: "#10b981",
+                    color: "#fff",
+                  }}
+                  onClick={handleReleaseReward}
+                  disabled={!validatePublicKey(reportPubkey) || !validatePublicKey(finderPubkey) || loading.releaseReward}
+                >
+                  {loading.releaseReward ? "Releasing..." : "Release Reward"}
+                </button>
+              </div>
 
-                  <section style={sectionStyle}>
-                    <h2 style={{ margin: "0 0 1rem 0" }}>Cancel Report</h2>
-                    <input
-                      style={{
-                        ...inputStyle,
-                        borderColor: validatePublicKey(reportPubkey) ? "#10b981" : "#374151"
-                      }}
-                      placeholder="Report Pubkey"
-                      value={reportPubkey}
-                      onChange={(e) => handleReportPubkeyChange(e.target.value)}
-                    />
-                    <button
-                      style={{
-                        ...buttonStyle(!validatePublicKey(reportPubkey) || loading.cancelReport),
-                        backgroundColor: "#ef4444",
-                        color: "#fff",
-                      }}
-                      onClick={handleCancelReport}
-                      disabled={!validatePublicKey(reportPubkey) || loading.cancelReport}
-                    >
-                      {loading.cancelReport ? "Canceling..." : "Cancel Report"}
-                    </button>
-                  </section>
-                </>
-              )}
+              <div style={sectionStyle}>
+                <h2 style={{ margin: "0 0 1rem 0" }}>Cancel Report</h2>
+                <input
+                  style={{
+                    ...inputStyle,
+                    borderColor: validatePublicKey(reportPubkey) ? "#10b981" : "#374151"
+                  }}
+                  placeholder="Report Pubkey"
+                  value={reportPubkey}
+                  onChange={(e) => setReportPubkey(e.target.value)}
+                />
+                <button
+                  style={{
+                    ...buttonStyle(!validatePublicKey(reportPubkey) || loading.cancelReport),
+                    backgroundColor: "#ef4444",
+                    color: "#fff",
+                  }}
+                  onClick={handleCancelReport}
+                  disabled={!validatePublicKey(reportPubkey) || loading.cancelReport}
+                >
+                  {loading.cancelReport ? "Canceling..." : "Cancel Report"}
+                </button>
+              </div>
+
+              <div style={{ 
+                ...sectionStyle, 
+                backgroundColor: "rgba(255, 193, 7, 0.1)",
+                borderColor: "rgba(255, 193, 7, 0.3)"
+              }}>
+                <h3 style={{ margin: "0 0 0.5rem 0", color: "#ffc107" }}>⚠️ Demo Mode</h3>
+                <p style={{ margin: 0, fontSize: "0.9rem", opacity: 0.8 }}>
+                  This is a demonstration version. Transactions are simulated. 
+                  To enable real transactions, provide the program IDL file.
+                </p>
+              </div>
             </div>
           )}
         </div>
